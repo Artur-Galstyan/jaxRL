@@ -1,0 +1,34 @@
+import jax.numpy as jnp
+import jax
+import numpy as np
+
+from equinox_rl.common.rl_helpers import get_policy_gradient_discrete_loss
+
+
+def test_get_policy_gradient_discrete_loss():
+    # Test case 1: Basic test
+    logits = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    actions = jnp.array([0, 1])
+    advantages = jnp.array([1.0, 2.0])
+
+    loss = get_policy_gradient_discrete_loss(logits, actions, advantages)
+
+    softmax = jnp.exp(logits) / jnp.sum(jnp.exp(logits), axis=1, keepdims=True)
+    log_probs = jnp.log(softmax[jnp.arange(logits.shape[0]), actions])
+    expected_loss = -jnp.mean(log_probs * advantages)
+
+    assert np.isclose(loss, expected_loss), f"Expected {expected_loss}, but got {loss}"
+
+    # Test case 2: Check if stop_gradient is working
+    policy_gradient_loss_grad = jax.grad(get_policy_gradient_discrete_loss, argnums=2)
+    grad_advantages = policy_gradient_loss_grad(logits, actions, advantages)
+    assert jnp.all(grad_advantages == 0), f"Expected all zeros, but got {grad_advantages}"
+
+    # Test case 3: Check when loss is zero
+    logits = jnp.array([[1.0, 1.0], [1.0, 1.0]])
+    actions = jnp.array([0, 1])
+    advantages = jnp.array([0.0, 0.0])
+
+    loss = get_policy_gradient_discrete_loss(logits, actions, advantages)
+    expected_loss = 0.0
+    assert np.isclose(loss, expected_loss), f"Expected {expected_loss}, but got {loss}"
