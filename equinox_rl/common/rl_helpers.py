@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax as tfp
-from jaxtyping import Array
+from jaxtyping import Array, Float32
 
 
 def get_future_rewards(rewards: Array, gamma=0.99) -> Array:
@@ -24,10 +24,10 @@ def get_future_rewards(rewards: Array, gamma=0.99) -> Array:
 
 
 def get_policy_gradient_discrete_loss(
-    logits: jnp.ndarray,
-    actions: jnp.ndarray,
-    advantages: jnp.ndarray,
-) -> jnp.ndarray:
+    logits: Array,
+    actions: Array,
+    advantages: Array,
+) -> Array:
     """Calculate the policy gradient loss for a discrete action space.
     Args:
         logits: The logits of the policy.
@@ -42,7 +42,7 @@ def get_policy_gradient_discrete_loss(
 
 
 @jax.jit
-def get_discounted_rewards(rewards: jnp.ndarray, gamma=0.99) -> jnp.ndarray:
+def get_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
     """Calculate the discounted rewards for a given set of rewards.
     Args:
         rewards: The rewards to calculate the discounted rewards for.
@@ -62,7 +62,7 @@ def get_discounted_rewards(rewards: jnp.ndarray, gamma=0.99) -> jnp.ndarray:
 
 
 @jax.jit
-def get_total_discounted_rewards(rewards: jnp.array, gamma=0.99) -> jnp.array:
+def get_total_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
     """Calculate the total discounted rewards for a given set of rewards.
     Args:
         rewards: The rewards to calculate the total discounted rewards for.
@@ -70,9 +70,38 @@ def get_total_discounted_rewards(rewards: jnp.array, gamma=0.99) -> jnp.array:
     Returns:
         The total discounted rewards.
     """
+
     def scan_fn(carry, current_reward):
         discounted_reward = carry + current_reward
         return discounted_reward * gamma, discounted_reward
 
     _, total_discounted_rewards = jax.lax.scan(scan_fn, 0.0, rewards[::-1])
     return total_discounted_rewards[::-1].reshape(-1, 1)
+
+
+@jax.jit
+def calculate_gae(
+    rewards: Array,
+    values: Array,
+    dones: Array,
+    gamma: float,
+    lam: float,
+) -> Array:
+    def body_fun(
+        carry: tuple[Array, Array], t: Array
+    ) -> tuple[tuple[Array, Array], None]:
+        advantages, gae = carry
+        delta = rewards[t] + gamma * values[t + 1] * (1 - dones[t]) - values[t]
+        gae = delta + gamma * lam * (1 - dones[t]) * gae
+        advantages = advantages.at[t].set(gae)
+        return (advantages, gae), None
+
+    values = jnp.append(values, values[0])
+    advantages = jnp.zeros_like(rewards)
+    gae = jnp.array(0.0)
+    T = len(rewards)
+
+    (advantages, _), _ = jax.lax.scan(
+        body_fun, (advantages, gae), jnp.arange(T - 1, -1, -1)
+    )
+    return advantages

@@ -192,3 +192,5 @@ cython_debug/
 # VIM
 .*.sw?
 .sw?
+runs/
+video/

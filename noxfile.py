@@ -5,10 +5,9 @@ import nox
 def tests(session):
     # Install dependencies using poetry
     session.install("poetry")
-    session.run("poetry", "install", "--no-dev")
-
     session.install("pytest")
-    session.run("pytest")
+    session.run("poetry", "install", external=True)
+    session.run("poetry", "run", "pytest")
 
 
 @nox.session
