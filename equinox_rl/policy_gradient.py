@@ -1,39 +1,36 @@
 import equinox as eqx
-import gymnasium as gym
+import gymnasium
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
-import tensorflow_probability.substrates.jax as tfp
 from jaxtyping import Array, Float32, PRNGKeyArray, PyTree
-import torch
-from tqdm import tqdm
 from torch.utils.data import DataLoader
-from equinox_rl.common import eqx_helpers, gym_helpers, rl_helpers
+from tqdm import tqdm
+from equinox_rl.common import gym_helpers, rl_helpers
 import matplotlib.pyplot as plt
 
 
 class Policy(eqx.Module):
     """Policy network for the policy gradient algorithm in a discrete action space."""
 
-    layers: list
+    mlp: eqx.nn.MLP
 
-    def __init__(self, layers: list[int], key: PRNGKeyArray) -> None:
-        """Initialize the policy network.
-        Args:
-            layers: The layers of the policy network.
-            key: The key to use for initialization.
-        """
-        self.layers = []
-
-        for i in range(len(layers) - 1):
-            key, subkey = jax.random.split(key)
-            self.layers.append(eqx.nn.Linear(layers[i], layers[i + 1], key=subkey))
-            del subkey
-
-            # Add a ReLU activation function to all but the last layer.
-            if i < len(layers) - 2:
-                self.layers.append(jax.nn.relu)
+    def __init__(
+        self,
+        in_size: int,
+        out_size: int,
+        key: PRNGKeyArray,
+        width_size: int = 32,
+        depth: int = 2,
+    ) -> None:
+        key, *subkeys = jax.random.split(key, 5)
+        self.mlp = eqx.nn.MLP(
+            in_size=in_size,
+            out_size=out_size,
+            width_size=width_size,
+            depth=depth,
+            key=key,
+        )
 
     def __call__(self, x: Float32[Array, "state_dims"]) -> Array:
         """Forward pass of the policy network.
@@ -42,13 +39,15 @@ class Policy(eqx.Module):
         Returns:
             The output of the policy network.
         """
-        for layer in self.layers:
-            x = layer(x)
-        return x
+        return self.mlp(x)
 
 
 @eqx.filter_jit
-def get_action(state: Float32[Array, "state_dims"], policy: Policy, key: PRNGKeyArray):
+def get_action(
+    state: Float32[Array, "state_dims"],
+    policy: Policy,
+    key: PRNGKeyArray,
+) -> Array:
     """Get an action from the policy network.
     Args:
         state: The state to get an action from.
@@ -57,153 +56,91 @@ def get_action(state: Float32[Array, "state_dims"], policy: Policy, key: PRNGKey
     Returns:
         The action sampled from the policy network.
     """
-    key, subkey = jax.random.split(key)
     logits = policy(state)
-    action = tfp.distributions.Categorical(logits=logits).sample(seed=subkey)
-
+    action = jax.random.categorical(key, logits)
     return action
 
 
-def loss_fn(
+def objective_fn(
     policy: PyTree,
-    states: Float32[Array, "n_steps state_dims"],
+    states: Float32[Array, "n_steps state_dim"],
     actions: Float32[Array, "n_steps"],
     rewards: Float32[Array, "n_steps"],
-    dones: Float32[Array, "n_steps"],
-    gamma: float,
-) -> Array:
+):
     logits = eqx.filter_vmap(policy)(states)
-    advantages = rl_helpers.get_total_discounted_rewards(rewards, gamma)
-
-    loss = rl_helpers.get_policy_gradient_discrete_loss(logits, actions, advantages)
-    return loss
+    log_probs = jax.nn.log_softmax(logits)
+    log_probs_actions = jnp.take_along_axis(
+        log_probs, jnp.expand_dims(actions, -1), axis=1
+    )
+    rewards = rl_helpers.get_total_discounted_rewards(
+        rewards
+    )  # don't let the past distract you!
+    return -jnp.mean(log_probs_actions * rewards)
 
 
 @eqx.filter_jit
 def step(
-    states: Float32[Array, "n_steps state_dims"],
+    policy: PyTree,
+    states: Float32[Array, "n_steps state_dim"],
     actions: Float32[Array, "n_steps"],
     rewards: Float32[Array, "n_steps"],
-    dones: Float32[Array, "n_steps"],
-    gamma: float,
-    optimizer: optax.GradientTransformation,
-    opt_state: PyTree,
-    policy: PyTree,
+    optimiser: optax.GradientTransformation,
+    optimiser_state: optax.OptState,
 ):
-    loss, grads = eqx.filter_value_and_grad(loss_fn)(
-        policy, states, actions, rewards, dones, gamma
+    value, grad = eqx.filter_value_and_grad(objective_fn)(
+        policy, states, actions, rewards
     )
-    updates, opt_state = optimizer.update(grads, opt_state, policy)
+    updates, optimiser_state = optimiser.update(grad, optimiser_state, policy)
     policy = eqx.apply_updates(policy, updates)
 
-    return policy, opt_state, loss
+    return policy, optimiser_state
 
 
 def train(
-    states: Float32[Array, "n_steps state_dims"],
-    actions: Float32[Array, "n_steps"],
-    rewards: Float32[Array, "n_steps"],
-    dones: Float32[Array, "n_steps"],
-    gamma: float,
     policy: PyTree,
-    opt_state: PyTree,
-    optimizer: optax.GradientTransformation,
-) -> tuple[PyTree, PyTree, np.float32]:
-    """Train the policy network."""
-
-    # Convert jax arrays to numpy arrays for the dataloader
-    states = np.array(states)  # type: ignore
-    actions = np.array(actions)  # type: ignore
-    rewards = np.array(rewards)  # type: ignore
-    dones = np.array(dones)  # type: ignore
-    dataset = gym_helpers.RLDataset(states, actions, rewards, dones)
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=False, drop_last=True)
-
-    losses = []
-
-    for batch in dataloader:
-        b_states, b_actions, b_rewards, b_dones = batch
-
-        b_states = jnp.array(b_states.numpy())
-        b_actions = jnp.array(b_actions.numpy())
-        b_rewards = jnp.array(b_rewards.numpy())
-        b_dones = jnp.array(b_dones.numpy())
-
-        policy, opt_state, loss = step(
-            b_states, b_actions, b_rewards, b_dones, gamma, optimizer, opt_state, policy
-        )
-
-        losses.append(loss)
-
-    return policy, opt_state, np.mean(losses)
-
-
-def experiment(hyperparams: dict):
-    """Run the experiment."""
-    env_name = hyperparams["env_name"]
-    learning_rate = hyperparams["learning_rate"]
-    gamma = hyperparams["gamma"]
-    layers = hyperparams["layers"]
-    n_episodes = hyperparams["n_episodes"]
-
-    policy = Policy(layers, key=jax.random.PRNGKey(0))
-    optimizer = optax.adamw(learning_rate)
-    opt_state = eqx_helpers.eqx_init_optimiser(optimizer, policy)
-
-    key = jax.random.PRNGKey(42)
-    env = gym.make(env_name)
-
-    losses = []
-    all_rewards = []
-    for i in tqdm(range(n_episodes)):
-        key, subkey = jax.random.split(key)
-
-        states, actions, rewards, dones = gym_helpers.rollout_discrete(
-            env, get_action, {"policy": policy}, key=subkey
-        )
-
-        del subkey
-
-        all_rewards.append(np.sum(rewards))
-
-        policy, opt_state, loss = train(
-            states, actions, rewards, dones, gamma, policy, opt_state, optimizer
-        )
-
-        losses.append(loss)
-
-        if (i % 100 == 0 and i >= 100) or i == n_episodes - 1:
-            print(
-                f"Episode {i} | R: {gym_helpers.moving_average(all_rewards, 100)[-1]}"
+    env: gymnasium.Env,
+    optimiser: optax.GradientTransformation,
+    n_epochs: int = 30,
+    n_episodes: int = 1000,
+) -> Policy:
+    opt_state = optimiser.init(eqx.filter(policy, eqx.is_array))
+    key = jax.random.PRNGKey(10)
+    reward_log = tqdm(
+        total=n_epochs,
+        desc="Reward",
+        position=2,
+        leave=True,
+        bar_format="{desc}",
+    )
+    rewards_to_show = []
+    for epoch in tqdm(range(n_epochs), desc="Epochs", position=0, leave=True):
+        epoch_rewards = 0
+        for episode in tqdm(
+            range(n_episodes), desc="Episodes", position=1, leave=False
+        ):
+            key, subkey = jax.random.split(key)
+            dataset, info = gym_helpers.rollout_discrete(
+                env, get_action, {"policy": policy}, subkey
             )
-            print(f"Episode {i} | L: {gym_helpers.moving_average(losses, 100)[-1]}")
+            dataloader = DataLoader(
+                dataset, batch_size=4, shuffle=False, drop_last=True
+            )
 
-    mean_reward = np.mean(all_rewards)
+            epoch_rewards += jnp.sum(dataset.rewards.numpy())
 
-    return mean_reward
+            for batch in dataloader:
+                b_states, b_actions, b_rewards, b_dones = batch
+                b_states = jnp.array(b_states.numpy())
+                b_actions = jnp.array(b_actions.numpy())
+                b_rewards = jnp.array(b_rewards.numpy())
+                b_dones = jnp.array(b_dones.numpy())
 
+                policy, opt_state = step(
+                    policy, b_states, b_actions, b_rewards, optimiser, opt_state
+                )
+        rewards_to_show.append(jnp.mean(epoch_rewards / n_episodes))
+        reward_log.set_description_str(f"Last avg. rewards: {rewards_to_show[-1]}")
+    plt.plot(rewards_to_show)
+    plt.show()
 
-def main() -> None:
-    """Run the experiment."""
-    env = gym.make("LunarLander-v2")
-    if env.observation_space.shape is None:
-        raise ValueError("Observation space shape is None")
-    if env.action_space.n is None:  # type: ignore
-        raise ValueError("Action space n is None")
-
-    state_dims = env.observation_space.shape[0]
-    n_actions = env.action_space.n  # type: ignore
-
-    hyperparams = {
-        "env_name": "LunarLander-v2",
-        "learning_rate": 1e-4,
-        "gamma": 0.99,
-        "layers": [state_dims, 256, 128, 64, n_actions],
-        "n_episodes": 10000,
-    }
-
-    experiment(hyperparams)
-
-
-if __name__ == "__main__":
-    main()
+    return policy

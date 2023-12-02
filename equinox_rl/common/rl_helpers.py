@@ -1,26 +1,6 @@
 import jax
 import jax.numpy as jnp
-import tensorflow_probability.substrates.jax as tfp
-from jaxtyping import Array, Float32
-
-
-def get_future_rewards(rewards: Array, gamma=0.99) -> Array:
-    """Calculate the future rewards for a given set of rewards.
-    Args:
-        rewards: The rewards to calculate the future rewards for.
-        gamma: The discount factor.
-
-    Returns:
-        The future rewards.
-    """
-    returns = jnp.zeros_like(rewards)
-    future_returns = 0
-
-    for t in range(len(rewards) - 1, -1, -1):
-        future_returns = rewards[t] + gamma * future_returns
-        returns = returns.at[t].set(future_returns)
-
-    return returns
+from jaxtyping import Array, Float
 
 
 def get_policy_gradient_discrete_loss(
@@ -36,19 +16,19 @@ def get_policy_gradient_discrete_loss(
     Returns:
         The policy gradient loss.
     """
-    log_probs = tfp.distributions.Categorical(logits=logits).log_prob(actions)
+    log_probs = jax.nn.log_softmax(logits)
+    log_probs = jnp.take_along_axis(log_probs, jnp.expand_dims(actions, -1), axis=1)
     advantages = jax.lax.stop_gradient(advantages)
     return -jnp.mean(log_probs * advantages)
 
 
-@jax.jit
-def get_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
+def get_discounted_rewards(rewards: Array, gamma=0.99) -> Float[Array, ""]:
     """Calculate the discounted rewards for a given set of rewards.
     Args:
         rewards: The rewards to calculate the discounted rewards for.
         gamma: The discount factor.
     Returns:
-        The discounted rewards.
+        The discounted rewards for the given rewards as a 1D array (i.e. a scalar).
     """
 
     def body_fn(i: int, val: float):
@@ -61,8 +41,7 @@ def get_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
     return discounted_rewards
 
 
-@jax.jit
-def get_total_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
+def get_total_discounted_rewards(rewards: Float[Array, "n_steps"], gamma=0.99) -> Array:
     """Calculate the total discounted rewards for a given set of rewards.
     Args:
         rewards: The rewards to calculate the total discounted rewards for.
@@ -76,10 +55,17 @@ def get_total_discounted_rewards(rewards: Array, gamma=0.99) -> Array:
         return discounted_reward * gamma, discounted_reward
 
     _, total_discounted_rewards = jax.lax.scan(scan_fn, 0.0, rewards[::-1])
-    return total_discounted_rewards[::-1].reshape(-1, 1)
+
+    total_discounted_rewards = total_discounted_rewards[::-1].reshape(
+        -1,
+    )
+    assert (
+        total_discounted_rewards.shape == rewards.shape
+    ), f"total_discounted_rewards.shape: {total_discounted_rewards.shape}, rewards.shape: {rewards.shape}"
+
+    return total_discounted_rewards
 
 
-@jax.jit
 def calculate_gae(
     rewards: Array,
     values: Array,
@@ -90,18 +76,23 @@ def calculate_gae(
     def body_fun(
         carry: tuple[Array, Array], t: Array
     ) -> tuple[tuple[Array, Array], None]:
-        advantages, gae = carry
+        advantages, gae_inner = carry
         delta = rewards[t] + gamma * values[t + 1] * (1 - dones[t]) - values[t]
-        gae = delta + gamma * lam * (1 - dones[t]) * gae
-        advantages = advantages.at[t].set(gae)
-        return (advantages, gae), None
+        gae_inner = delta + gamma * lam * (1 - dones[t]) * gae_inner
+        advantages = advantages.at[t].set(gae_inner)
+        return (advantages, gae_inner), None
 
     values = jnp.append(values, values[0])
-    advantages = jnp.zeros_like(rewards)
+    advt = jnp.zeros_like(rewards)
     gae = jnp.array(0.0)
-    T = len(rewards)
+    t = len(rewards)
 
-    (advantages, _), _ = jax.lax.scan(
-        body_fun, (advantages, gae), jnp.arange(T - 1, -1, -1)
-    )
-    return advantages
+    (advt, _), _ = jax.lax.scan(body_fun, (advt, gae), jnp.arange(t - 1, -1, -1))
+    return advt
+
+
+if __name__ == "__main__":
+    from icecream import ic
+
+    r = jnp.array([1 for _ in range(10)])
+    ic(get_total_discounted_rewards(r))

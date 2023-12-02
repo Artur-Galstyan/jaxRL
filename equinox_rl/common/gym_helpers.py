@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from jaxtyping import Array, PRNGKeyArray
+from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 
 
@@ -35,22 +36,26 @@ class RLDataset(Dataset):
 
 
 def rollout_discrete(
-    env: gym.Env, action_fn: Callable, action_fn_kwargs: dict, key: PRNGKeyArray
-) -> tuple[Array, Array, Array, Array]:
+    env: gym.Env,
+    action_fn: Callable,
+    action_fn_kwargs: dict,
+    key: PRNGKeyArray,
+    render: bool = False,
+) -> tuple[RLDataset, dict]:
     obs, _ = env.reset()
 
     observations = []
     actions = []
     rewards = []
     dones = []
+    info = None
 
     while True:
         key, subkey = jax.random.split(key)
         observations.append(obs)
 
         action = np.array(action_fn(obs, **action_fn_kwargs, key=subkey))
-
-        obs, reward, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
         actions.append(action)
         rewards.append(reward)
@@ -59,9 +64,8 @@ def rollout_discrete(
         if done:
             break
 
-    return (
-        jnp.array(observations),
-        jnp.array(actions),
-        jnp.array(rewards),
-        jnp.array(dones),
+    dataset = RLDataset(
+        np.array(observations), np.array(actions), np.array(rewards), np.array(dones)
     )
+
+    return dataset, info

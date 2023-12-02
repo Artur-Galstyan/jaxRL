@@ -13,4 +13,4 @@ def eqx_init_optimiser(optim: GradientTransformation, params: PyTree) -> PyTree:
     Returns:
         The initialised optimiser state.
     """
-    return optim.init(eqx.filter(params, eqx.is_array))
+    return optim.init(eqx.filter(params, eqx.is_inexact_array))
