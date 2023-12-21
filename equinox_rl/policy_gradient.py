@@ -1,3 +1,5 @@
+from typing import Optional, Tuple
+
 import equinox as eqx
 import gymnasium
 import jax
@@ -9,8 +11,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from equinox_rl.common import gym_helpers, rl_helpers
+from beartype import beartype
 
 
+@beartype
 class Policy(eqx.Module):
     """Policy network for the policy gradient algorithm in a discrete action space."""
 
@@ -43,6 +47,7 @@ class Policy(eqx.Module):
         return self.mlp(x)
 
 
+@beartype
 class ValueNetwork(eqx.Module):
     """Value network for the policy gradient algorithm in a discrete action space."""
 
@@ -123,7 +128,7 @@ def step(
     optimiser: optax.GradientTransformation,
     optimiser_state: optax.OptState,
     value_network: PyTree,
-):
+) -> Tuple[PyTree, optax.OptState]:
     _, grad = eqx.filter_value_and_grad(objective_fn)(
         policy, states, actions, rewards, value_network
     )
@@ -157,7 +162,7 @@ def step_value_network(
     rewards: Float32[Array, "n_steps"],
     optimiser: optax.GradientTransformation,
     optimiser_state: optax.OptState,
-):
+) -> Tuple[PyTree, optax.OptState]:
     _, grad = eqx.filter_value_and_grad(value_loss_fn)(value_network, states, rewards)
     updates, optimiser_state = optimiser.update(grad, optimiser_state, value_network)
     value_network = eqx.apply_updates(value_network, updates)
@@ -166,35 +171,64 @@ def step_value_network(
 
 
 def train(
-    policy: PyTree,
     env: gymnasium.Env,
     optimiser: optax.GradientTransformation,
+    policy: Optional[PyTree] = None,
+    value_network: Optional[PyTree] = None,
     n_epochs: int = 30,
     n_episodes: int = 1000,
-) -> Policy:
-    value_network = ValueNetwork(
-        in_size=env.observation_space.shape[0],
-        out_size=1,
-        key=jax.random.PRNGKey(0),
-    )
+    *,
+    key: PRNGKeyArray,
+) -> (PyTree, PyTree, Array):
+    """Train a policy network using the policy gradient algorithm.
+    Args:
+        env: The environment to train on.
+        optimiser: The optimiser to use.
+        policy: The policy network to train.
+        value_network: The value network to train.
+        n_epochs: The number of epochs to train for.
+        n_episodes: The number of episodes to train for.
+    Returns:
+        The trained policy network.
+        The trained value network.
+        The rewards per epoch.
+    """
+    assert isinstance(
+        env.action_space, gymnasium.spaces.Discrete
+    ), "Only discrete action spaces are supported."
+    assert isinstance(
+        env.observation_space, gymnasium.spaces.Box
+    ), "Only box observation spaces are supported."
+    key, policy_key, value_key = jax.random.split(key, 3)
+    if policy is None:
+        policy = Policy(
+            in_size=int(env.observation_space.shape[0]),
+            out_size=int(env.action_space.n),
+            key=policy_key,
+        )
+    if value_network is None:
+        value_network = ValueNetwork(
+            in_size=int(env.observation_space.shape[0]),
+            out_size=1,
+            key=value_key,
+        )
+    assert policy is not None, "Policy was not initialised"
+    assert value_network is not None, "Value network was not initialised"
     opt_state_value = optimiser.init(eqx.filter(value_network, eqx.is_inexact_array))
     opt_state = optimiser.init(eqx.filter(policy, eqx.is_array))
-    key = jax.random.PRNGKey(10)
+    key, subkey = jax.random.split(key)
     reward_log = tqdm(
         total=n_epochs,
         desc="Reward",
         position=2,
-        leave=True,
         bar_format="{desc}",
     )
     rewards_to_show = []
-    for epoch in tqdm(range(n_epochs), desc="Epochs", position=0, leave=True):
+    for _ in tqdm(range(n_epochs), desc="Epochs", position=0):
         epoch_rewards = 0
-        for episode in tqdm(
-            range(n_episodes), desc="Episodes", position=1, leave=False
-        ):
+        for _ in tqdm(range(n_episodes), desc="Episodes", position=1, leave=False):
             key, subkey = jax.random.split(key)
-            dataset, info = gym_helpers.rollout_discrete(
+            dataset, _ = gym_helpers.rollout_discrete(
                 env, get_action, {"policy": policy}, subkey
             )
             dataloader = DataLoader(
@@ -211,21 +245,23 @@ def train(
                 b_dones = jnp.array(b_dones.numpy())
 
                 value_network, opt_state_value = step_value_network(
-                    value_network, b_states, b_rewards, optimiser, opt_state_value
+                    value_network=value_network,
+                    states=b_states,
+                    rewards=b_rewards,
+                    optimiser=optimiser,
+                    optimiser_state=opt_state_value,
                 )
 
                 policy, opt_state = step(
-                    policy,
-                    b_states,
-                    b_actions,
-                    b_rewards,
-                    optimiser,
-                    opt_state,
-                    value_network,
+                    policy=policy,
+                    states=b_states,
+                    actions=b_actions,
+                    rewards=b_rewards,
+                    optimiser=optimiser,
+                    optimiser_state=opt_state,
+                    value_network=value_network,
                 )
         rewards_to_show.append(jnp.mean(epoch_rewards / n_episodes))
         reward_log.set_description_str(f"Last avg. rewards: {rewards_to_show[-1]}")
-    plt.plot(rewards_to_show)
-    plt.show()
 
-    return policy
+    return policy, value_network, rewards_to_show

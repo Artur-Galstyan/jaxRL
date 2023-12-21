@@ -1,12 +1,9 @@
-from typing import Callable
-
 import gymnasium as gym
 import jax
-import jax.numpy as jnp
 import numpy as np
 import torch
-from jaxtyping import Array, PRNGKeyArray
-from torch.utils.data import DataLoader
+from beartype.typing import Callable
+from jaxtyping import PRNGKeyArray
 from torch.utils.data.dataset import Dataset
 
 

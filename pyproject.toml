@@ -26,6 +26,7 @@ jax = "^0.4.20"
 equinox = "^0.11.1"
 jaxlib = "^0.4.20"
 icecream = "^2.1.3"
+beartype = "^0.16.4"
 
 
 [build-system]
