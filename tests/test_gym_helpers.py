@@ -1,4 +1,4 @@
-from equinox_rl.common.gym_helpers import rollout_discrete
+from jax_rl.common.gym_helpers import rollout_discrete
 import gymnasium as gym
 
 

@@ -2,8 +2,8 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 
-from equinox_rl.common.rl_helpers import get_policy_gradient_discrete_loss
-from equinox_rl.common.rl_helpers import calculate_gae
+from jax_rl.common.rl_helpers import get_policy_gradient_discrete_loss
+from jax_rl.common.rl_helpers import calculate_gae
 
 
 def test_get_policy_gradient_discrete_loss():

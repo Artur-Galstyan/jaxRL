@@ -2,17 +2,21 @@ import gymnasium
 import jax
 import optax
 
-from equinox_rl import policy_gradient
+from jax_rl import policy_gradient, ppo
 
 
 def main():
     env = gymnasium.make("CartPole-v1", max_episode_steps=200, render_mode="rgb_array")
 
-    optimizer = optax.adam(learning_rate=1e-3)
+    actor_optimiser = optax.adam(learning_rate=1e-3)
+    critic_optimiser = optax.adam(learning_rate=1e-3)
     key = jax.random.PRNGKey(0)
-    policy = policy_gradient.train(
+    actor = ppo.train(
         env,
-        optimizer,
+        actor=None,
+        critic=None,
+        actor_optimiser=actor_optimiser,
+        critic_optimiser=critic_optimiser,
         n_epochs=30,
         n_episodes=1000,
         key=key,

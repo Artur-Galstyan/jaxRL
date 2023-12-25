@@ -43,6 +43,8 @@ def get_discounted_rewards(rewards: Array, gamma=0.99) -> Float[Array, ""]:
 
 def get_total_discounted_rewards(rewards: Float[Array, "n_steps"], gamma=0.99) -> Array:
     """Calculate the total discounted rewards for a given set of rewards.
+    This is also known as the rewards-to-go.
+
     Args:
         rewards: The rewards to calculate the total discounted rewards for.
         gamma: The discount factor.

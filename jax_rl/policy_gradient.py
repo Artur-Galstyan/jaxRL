@@ -4,13 +4,13 @@ import equinox as eqx
 import gymnasium
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
+
 import optax
 from jaxtyping import Array, Float32, PRNGKeyArray, PyTree
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from equinox_rl.common import gym_helpers, rl_helpers
+from jax_rl.common import gym_helpers, rl_helpers
 from beartype import beartype
 
 
@@ -93,10 +93,11 @@ def get_action(
         key: The key to use for sampling.
     Returns:
         The action sampled from the policy network.
+        The logits from the policy network.
     """
     logits = policy(state)
     action = jax.random.categorical(key, logits)
-    return action
+    return action, logits
 
 
 def objective_fn(
@@ -111,9 +112,7 @@ def objective_fn(
     log_probs_actions = jnp.take_along_axis(
         log_probs, jnp.expand_dims(actions, -1), axis=1
     )
-    rewards = rl_helpers.get_total_discounted_rewards(
-        rewards
-    )  # don't let the past distract you!
+    rewards = rl_helpers.get_total_discounted_rewards(rewards)
     values = eqx.filter_vmap(value_network)(states)
     advantages = rewards - values
     return -jnp.mean(log_probs_actions * advantages)
@@ -184,8 +183,8 @@ def train(
     Args:
         env: The environment to train on.
         optimiser: The optimiser to use.
-        policy: The policy network to train.
-        value_network: The value network to train.
+        policy: The policy network to train. If None, a new one will be initialised.
+        value_network: The value network to train. If None, a new one will be initialised.
         n_epochs: The number of epochs to train for.
         n_episodes: The number of episodes to train for.
     Returns:
@@ -238,9 +237,10 @@ def train(
             epoch_rewards += jnp.sum(dataset.rewards.numpy())
 
             for batch in dataloader:
-                b_states, b_actions, b_rewards, b_dones = batch
+                b_states, b_actions, b_rewards, b_log_probs, b_dones = batch
                 b_states = jnp.array(b_states.numpy())
                 b_actions = jnp.array(b_actions.numpy())
+                b_log_probs = jnp.array(b_log_probs.numpy())
                 b_rewards = jnp.array(b_rewards.numpy())
                 b_dones = jnp.array(b_dones.numpy())
 
