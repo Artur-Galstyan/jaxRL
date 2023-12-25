@@ -1,4 +1,4 @@
-# Equinox-RL
+# jaxRL
 
 This is repo for reference RL implementations using [Equinox](https://docs.kidger.site/equinox/). 
 
