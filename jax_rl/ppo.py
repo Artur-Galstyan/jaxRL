@@ -1,5 +1,4 @@
 from __future__ import print_function
-from logging import log
 from typing import Optional, Tuple
 
 import equinox as eqx
@@ -81,6 +80,7 @@ class Critic(eqx.Module):
         return self.mlp(x)
 
 
+@eqx.filter_jit
 def get_action(obs: Array, actor: Actor, key: PRNGKeyArray) -> tuple[int, Array]:
     """Sample an action from the policy network.
     Args:
@@ -164,10 +164,14 @@ def step_critic(
 
 def train(
     env: gym.Env,
+    env_type: str,
     actor: Actor,
     critic: Critic,
     actor_optimiser: optax.GradientTransformation,
     critic_optimiser: optax.GradientTransformation,
+    obs_size: int,
+    action_size: int,
+    env_params: dict = {},
     n_epochs: int = 30,
     n_episodes: int = 1000,
     updates_per_batch: int = 1,
@@ -190,22 +194,16 @@ def train(
     Returns:
         The trained policy network.
     """
-    assert isinstance(
-        env.action_space, gym.spaces.Discrete
-    ), "Only discrete action spaces are supported."
-    assert isinstance(
-        env.observation_space, gym.spaces.Box
-    ), "Only box observation spaces are supported."
     key, policy_key, value_key = jax.random.split(key, 3)
     if actor is None:
         actor = Actor(
-            in_size=int(env.observation_space.shape[0]),
-            out_size=int(env.action_space.n),
+            in_size=int(obs_size),
+            out_size=int(action_size),
             key=policy_key,
         )
     if critic is None:
         critic = Critic(
-            in_size=int(env.observation_space.shape[0]),
+            in_size=int(obs_size),
             out_size=1,
             key=value_key,
         )
@@ -225,9 +223,14 @@ def train(
         epoch_rewards = 0
         for _ in tqdm(range(n_episodes), desc="Episodes", position=1, leave=False):
             key, subkey = jax.random.split(key)
-            dataset, _ = gym_helpers.rollout_discrete(
-                env, get_action, {"actor": actor}, subkey
-            )
+            if env_type == "gymnax":
+                dataset, _ = gym_helpers.gymnax_rollout_discrete(
+                    env, env_params, get_action, {"actor": actor}, subkey
+                )
+            else:
+                dataset, _ = gym_helpers.rollout_discrete(
+                    env, get_action, {"actor": actor}, subkey
+                )
             dataloader = DataLoader(
                 dataset, batch_size=4, shuffle=False, drop_last=True
             )

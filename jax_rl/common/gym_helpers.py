@@ -35,6 +35,67 @@ class RLDataset(Dataset):
         )
 
 
+def prepare_data_collection():
+    observations = []
+    actions = []
+    log_probs = []
+    rewards = []
+    dones = []
+    info = None
+    return observations, actions, log_probs, rewards, dones, info
+
+
+def gymnax_rollout_discrete(
+    env: gym.Env,
+    env_params,
+    action_fn: Callable[[np.ndarray, dict], tuple[int, np.ndarray]],
+    action_fn_kwargs: dict,
+    key: PRNGKeyArray,
+    render: bool = False,
+    max_steps: Optional[int] = None,
+) -> tuple[RLDataset, dict]:
+    key, key_reset = jax.random.split(key)
+    obs, state = env.reset(key_reset, env_params)
+
+    observations, actions, log_probs, rewards, dones, info = prepare_data_collection()
+    jitted_step = jax.jit(env.step)
+    while True:
+        key, subkey, key_step = jax.random.split(key, 3)
+        observations.append(obs)
+
+        action, logits = action_fn(obs, **action_fn_kwargs, key=subkey)
+        action = np.array(action)
+        log_prob = np.array(jax.nn.log_softmax(np.array(logits)))
+        log_probs.append(log_prob[action])
+        obs, state, reward, done, info = jitted_step(
+            key_step, state, action, env_params
+        )
+        if render:
+            env.render()
+        actions.append(action)
+        rewards.append(reward)
+        dones.append(done)
+
+        if max_steps is not None and len(observations) < max_steps:
+            if done:
+                key, key_reset = jax.random.split(key)
+                obs, state = env.reset(key_reset, env_params)
+        elif max_steps is not None and len(observations) >= max_steps:
+            break
+        else:
+            if done:
+                break
+    dataset = RLDataset(
+        np.array(observations),
+        np.array(actions),
+        np.array(rewards),
+        np.array(log_probs),
+        np.array(dones),
+    )
+
+    return dataset, info
+
+
 def rollout_discrete(
     env: gym.Env,
     action_fn: Callable[[np.ndarray, dict], tuple[int, np.ndarray]],
