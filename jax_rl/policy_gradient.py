@@ -2,16 +2,18 @@ from typing import Optional, Tuple
 
 import equinox as eqx
 import gymnasium
+import gymnax
 import jax
 import jax.numpy as jnp
-
 import optax
+from beartype import beartype
+from gymnax.environments.environment import EnvParams
 from jaxtyping import Array, Float32, PRNGKeyArray, PyTree
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from jax_rl import common_helper_functions
 from jax_rl.common import gym_helpers, rl_helpers
-from beartype import beartype
 
 
 @beartype
@@ -105,7 +107,7 @@ def objective_fn(
     states: Float32[Array, "n_steps state_dim"],
     actions: Float32[Array, "n_steps"],
     rewards: Float32[Array, "n_steps"],
-    value_network: PyTree,
+    critic: PyTree,
 ):
     logits = eqx.filter_vmap(policy)(states)
     log_probs = jax.nn.log_softmax(logits)
@@ -113,31 +115,31 @@ def objective_fn(
         log_probs, jnp.expand_dims(actions, -1), axis=1
     )
     rewards = rl_helpers.get_total_discounted_rewards(rewards)
-    values = eqx.filter_vmap(value_network)(states)
+    values = eqx.filter_vmap(critic)(states)
     advantages = rewards - values
     return -jnp.mean(log_probs_actions * advantages)
 
 
 @eqx.filter_jit
-def step(
-    policy: PyTree,
+def step_actor_network(
+    actor: PyTree,
     states: Float32[Array, "n_steps state_dim"],
     actions: Float32[Array, "n_steps"],
     rewards: Float32[Array, "n_steps"],
     optimiser: optax.GradientTransformation,
     optimiser_state: optax.OptState,
-    value_network: PyTree,
+    critic: PyTree,
 ) -> Tuple[PyTree, optax.OptState]:
     _, grad = eqx.filter_value_and_grad(objective_fn)(
-        policy, states, actions, rewards, value_network
+        actor, states, actions, rewards, critic
     )
-    updates, optimiser_state = optimiser.update(grad, optimiser_state, policy)
-    policy = eqx.apply_updates(policy, updates)
+    updates, optimiser_state = optimiser.update(grad, optimiser_state, actor)
+    actor = eqx.apply_updates(actor, updates)
 
-    return policy, optimiser_state
+    return actor, optimiser_state
 
 
-def value_loss_fn(
+def critic_loss_fn(
     value_network: PyTree,
     states: Float32[Array, "n_steps state_dim"],
     rewards: Float32[Array, "n_steps"],
@@ -155,25 +157,29 @@ def value_loss_fn(
 
 
 @eqx.filter_jit
-def step_value_network(
-    value_network: PyTree,
+def step_critic_network(
+    critic: PyTree,
     states: Float32[Array, "n_steps state_dim"],
     rewards: Float32[Array, "n_steps"],
     optimiser: optax.GradientTransformation,
     optimiser_state: optax.OptState,
 ) -> Tuple[PyTree, optax.OptState]:
-    _, grad = eqx.filter_value_and_grad(value_loss_fn)(value_network, states, rewards)
-    updates, optimiser_state = optimiser.update(grad, optimiser_state, value_network)
-    value_network = eqx.apply_updates(value_network, updates)
+    _, grad = eqx.filter_value_and_grad(critic_loss_fn)(critic, states, rewards)
+    updates, optimiser_state = optimiser.update(grad, optimiser_state, critic)
+    critic = eqx.apply_updates(critic, updates)
 
-    return value_network, optimiser_state
+    return critic, optimiser_state
 
 
 def train(
-    env: gymnasium.Env,
-    optimiser: optax.GradientTransformation,
-    policy: Optional[PyTree] = None,
-    value_network: Optional[PyTree] = None,
+    env,
+    obs_size: int,
+    action_size: int,
+    actor_optimiser: optax.GradientTransformation,
+    critic_optimiser: optax.GradientTransformation,
+    env_params: Optional[EnvParams] = None,
+    actor: Optional[PyTree] = None,
+    critic: Optional[PyTree] = None,
     n_epochs: int = 30,
     n_episodes: int = 1000,
     *,
@@ -192,29 +198,23 @@ def train(
         The trained value network.
         The rewards per epoch.
     """
-    assert isinstance(
-        env.action_space, gymnasium.spaces.Discrete
-    ), "Only discrete action spaces are supported."
-    assert isinstance(
-        env.observation_space, gymnasium.spaces.Box
-    ), "Only box observation spaces are supported."
     key, policy_key, value_key = jax.random.split(key, 3)
-    if policy is None:
-        policy = Policy(
-            in_size=int(env.observation_space.shape[0]),
-            out_size=int(env.action_space.n),
+    if actor is None:
+        actor = Policy(
+            in_size=obs_size,
+            out_size=action_size,
             key=policy_key,
         )
-    if value_network is None:
-        value_network = ValueNetwork(
-            in_size=int(env.observation_space.shape[0]),
+    if critic is None:
+        critic = ValueNetwork(
+            in_size=obs_size,
             out_size=1,
             key=value_key,
         )
-    assert policy is not None, "Policy was not initialised"
-    assert value_network is not None, "Value network was not initialised"
-    opt_state_value = optimiser.init(eqx.filter(value_network, eqx.is_inexact_array))
-    opt_state = optimiser.init(eqx.filter(policy, eqx.is_array))
+    assert actor is not None, "Policy was not initialised"
+    assert critic is not None, "Value network was not initialised"
+    opt_state_critic = critic_optimiser.init(eqx.filter(critic, eqx.is_inexact_array))
+    opt_state_actor = actor_optimiser.init(eqx.filter(actor, eqx.is_inexact_array))
     key, subkey = jax.random.split(key)
     reward_log = tqdm(
         total=n_epochs,
@@ -227,8 +227,8 @@ def train(
         epoch_rewards = 0
         for _ in tqdm(range(n_episodes), desc="Episodes", position=1, leave=False):
             key, subkey = jax.random.split(key)
-            dataset, _ = gym_helpers.rollout_discrete(
-                env, get_action, {"policy": policy}, subkey
+            dataset, _ = common_helper_functions.rollout_discrete(
+                env, get_action, {"policy": actor}, subkey, env_params=env_params
             )
             dataloader = DataLoader(
                 dataset, batch_size=4, shuffle=False, drop_last=True
@@ -244,24 +244,24 @@ def train(
                 b_rewards = jnp.array(b_rewards.numpy())
                 b_dones = jnp.array(b_dones.numpy())
 
-                value_network, opt_state_value = step_value_network(
-                    value_network=value_network,
+                value_network, opt_state_value = step_critic_network(
+                    critic=critic,
                     states=b_states,
                     rewards=b_rewards,
-                    optimiser=optimiser,
-                    optimiser_state=opt_state_value,
+                    optimiser=critic_optimiser,
+                    optimiser_state=opt_state_critic,
                 )
 
-                policy, opt_state = step(
-                    policy=policy,
+                policy, opt_state = step_actor_network(
+                    actor=actor,
                     states=b_states,
                     actions=b_actions,
                     rewards=b_rewards,
-                    optimiser=optimiser,
-                    optimiser_state=opt_state,
-                    value_network=value_network,
+                    optimiser=actor_optimiser,
+                    optimiser_state=opt_state_actor,
+                    critic=critic,
                 )
         rewards_to_show.append(jnp.mean(epoch_rewards / n_episodes))
         reward_log.set_description_str(f"Last avg. rewards: {rewards_to_show[-1]}")
 
-    return policy, value_network, rewards_to_show
+    return actor, critic, rewards_to_show
