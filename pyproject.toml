@@ -20,7 +20,7 @@ optax = "^0.1.7"
 tqdm = "^4.66.1"
 moviepy = "^1.0.3"
 gym = "^0.26.2"
-chex = "^0.1.7"
+chex = "^0.1.85"
 matplotlib = "^3.8.1"
 jax = "^0.4.20"
 equinox = "^0.11.1"
@@ -30,6 +30,7 @@ beartype = "^0.16.4"
 brax = "^0.9.3"
 rlax = "^0.1.6"
 gymnax = "^0.0.6"
+flax = "^0.7.5"
 
 
 [build-system]
