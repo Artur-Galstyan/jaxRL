@@ -90,18 +90,17 @@ def train(
 ) -> (PyTree, PyTree, Array):
     key, subkey = jax.random.split(key)
 
-    critic, critic_optimiser_state = step_critic_network(
-        critic=critic,
-        optimiser=critic_optimiser,
-        optimiser_state=critic_optimiser_state,
-        replay_buffer=replay_buffer,
-    )
-
     actor, actor_optimiser_state = step_actor_network(
         actor=actor,
         optimiser=actor_optimiser,
         optimiser_state=actor_optimiser_state,
         critic=critic,
+        replay_buffer=replay_buffer,
+    )
+    critic, critic_optimiser_state = step_critic_network(
+        critic=critic,
+        optimiser=critic_optimiser,
+        optimiser_state=critic_optimiser_state,
         replay_buffer=replay_buffer,
     )
 

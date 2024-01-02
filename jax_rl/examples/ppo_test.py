@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from jax_rl.commons import ReplayBuffer
-from jax_rl.policy_gradient import train
+from jax_rl.ppo import train
 from jax_rl.rollout import rollout_gym
 
 
@@ -23,8 +23,8 @@ class Actor(eqx.Module):
         in_size: int,
         out_size: int,
         key: PRNGKeyArray,
-        width_size: int = 32,
-        depth: int = 2,
+        width_size: int = 64,
+        depth: int = 3,
     ) -> None:
         key, *subkeys = jax.random.split(key, 5)
         self.mlp = eqx.nn.MLP(
@@ -77,7 +77,9 @@ class Critic(eqx.Module):
         return self.mlp(x)
 
 
-env = gym.make("CartPole-v1")
+# env_name = "CartPole-v1"
+env_name = "LunarLander-v2"
+env = gym.make(env_name)
 
 learning_rate = 3e-4
 
@@ -102,12 +104,14 @@ critic_optimiser_state = critic_optimiser.init(eqx.filter(critic, eqx.is_inexact
 actor_optimiser_state = actor_optimiser.init(eqx.filter(actor, eqx.is_inexact_array))
 key = jax.random.PRNGKey(2)
 
-n_episodes = 10000
+n_episodes = 2000
 batch_size = 8
-
+gamma = 0.99
+lambda_ = 0.95
+epsilon = 0.2
 all_rewards = []
 for eps in tqdm(range(n_episodes)):
-    key, subkey, subkey2 = jax.random.split(key, 3)
+    key, subkey = jax.random.split(key)
     dataset = rollout_gym(env, actor, subkey)
 
     dataloader = DataLoader(
@@ -134,7 +138,9 @@ for eps in tqdm(range(n_episodes)):
             critic_optimiser=critic_optimiser,
             critic_optimiser_state=critic_optimiser_state,
             replay_buffer=b,
-            key=subkey2,
+            epsilon=epsilon,
+            gamma=gamma,
+            lambda_=lambda_,
         )
 
 plt.plot(all_rewards)
