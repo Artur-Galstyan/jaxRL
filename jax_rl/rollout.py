@@ -15,7 +15,7 @@ def rollout_gym(
 
     obs, info = env.reset()
 
-    observations = []
+    observations = [obs]
     actions = []
     log_probs = []
     rewards = []
@@ -24,7 +24,6 @@ def rollout_gym(
 
     while True:
         key, subkey = jax.random.split(key)
-        observations.append(obs)
         logits = policy(obs)
         action = jax.random.categorical(logits=logits, key=subkey)
         action = np.array(action)
@@ -33,6 +32,8 @@ def rollout_gym(
         obs, reward, terminated, truncated, info = env.step(action)
         if render:
             env.render()
+
+        observations.append(obs)
         done = terminated or truncated
         actions.append(action)
         rewards.append(reward)
@@ -41,7 +42,7 @@ def rollout_gym(
         if done:
             break
 
-    dataset = RLDataset(
+    return (
         np.array(observations),
         np.array(actions),
         np.array(rewards),

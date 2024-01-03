@@ -1,11 +1,14 @@
+from typing import NamedTuple
 import equinox as eqx
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
 import optax
+from gymnasium.wrappers.time_limit import TimeLimit
 from jaxtyping import Array, Float32, PRNGKeyArray
-from torch.utils.data import DataLoader
+
 from tqdm import tqdm
 
 from jax_rl.commons import ReplayBuffer
@@ -23,8 +26,8 @@ class Actor(eqx.Module):
         in_size: int,
         out_size: int,
         key: PRNGKeyArray,
-        width_size: int = 64,
-        depth: int = 3,
+        width_size: int = 128,
+        depth: int = 2,
     ) -> None:
         key, *subkeys = jax.random.split(key, 5)
         self.mlp = eqx.nn.MLP(
@@ -36,18 +39,10 @@ class Actor(eqx.Module):
         )
 
     def __call__(self, x: Float32[Array, "state_dims"]) -> Array:
-        """Forward pass of the policy network.
-        Args:
-            x: The input to the policy network.
-        Returns:
-            The output of the policy network.
-        """
         return self.mlp(x)
 
 
 class Critic(eqx.Module):
-    """Value network for the policy gradient algorithm in a discrete action space."""
-
     mlp: eqx.nn.MLP
 
     def __init__(
@@ -55,8 +50,8 @@ class Critic(eqx.Module):
         in_size: int,
         out_size: int,
         key: PRNGKeyArray,
-        width_size: int = 64,
-        depth: int = 3,
+        width_size: int = 128,
+        depth: int = 2,
     ) -> None:
         key, *subkeys = jax.random.split(key, 5)
         self.mlp = eqx.nn.MLP(
@@ -68,19 +63,14 @@ class Critic(eqx.Module):
         )
 
     def __call__(self, x: Float32[Array, "state_dims"]) -> Array:
-        """Forward pass of the policy network.
-        Args:
-            x: The input to the policy network.
-        Returns:
-            The output of the policy network.
-        """
         return self.mlp(x)
 
 
+max_episode_steps = 1024
 # env_name = "CartPole-v1"
 env_name = "LunarLander-v2"
 env = gym.make(env_name)
-
+env = TimeLimit(env, max_episode_steps=max_episode_steps - 1)
 learning_rate = 3e-4
 
 
@@ -98,36 +88,53 @@ critic = Critic(
     key=jax.random.PRNGKey(1),
 )
 
+
 actor_optimiser = optax.adam(learning_rate)
 critic_optimiser = optax.adam(learning_rate)
 critic_optimiser_state = critic_optimiser.init(eqx.filter(critic, eqx.is_inexact_array))
 actor_optimiser_state = actor_optimiser.init(eqx.filter(actor, eqx.is_inexact_array))
 key = jax.random.PRNGKey(2)
 
-n_episodes = 2000
-batch_size = 8
+n_episodes = 500
+batch_size = 64
 gamma = 0.99
 lambda_ = 0.95
 epsilon = 0.2
 all_rewards = []
-for eps in tqdm(range(n_episodes)):
-    key, subkey = jax.random.split(key)
-    dataset = rollout_gym(env, actor, subkey)
+n_epochs = 10
+training_stats_log = tqdm(
+    total=float("-inf"), position=2, leave=False, ncols=0, ascii=True
+)
+last_mean_reward_log = tqdm(
+    total=float("-inf"),
+    desc="Last mean reward",
+    position=3,
+    leave=False,
+    ascii=True,
+    ncols=0,
+)
+for epoch in tqdm(range(n_epochs), desc="Epochs", position=0, leave=False, ascii=True):
+    rews = []
+    for eps in tqdm(
+        range(n_episodes), desc="Episodes", position=1, leave=False, ascii=True
+    ):
+        key, subkey = jax.random.split(key)
+        obs, actions, rewards, log_probs, dones = rollout_gym(env, actor, subkey)
+        # pad arrays to make them all the same length of max_episode_steps
+        obs = np.pad(obs, ((0, max_episode_steps - len(obs)), (0, 0)))
+        actions = np.pad(actions, (0, max_episode_steps - len(actions)))
+        rewards = np.pad(rewards, (0, max_episode_steps - len(rewards) - 1))
+        log_probs = np.pad(log_probs, (0, max_episode_steps - len(log_probs)))
+        dones = np.pad(dones, (True, max_episode_steps - len(dones)))
 
-    dataloader = DataLoader(
-        batch_size=batch_size, shuffle=False, drop_last=True, dataset=dataset
-    )
+        rews.append(jnp.sum(rewards))
 
-    all_rewards.append(jnp.sum(dataset.rewards.numpy()))
-
-    for batch in dataloader:
-        obs, actions, rewards, log_probs, dones = batch
         b = ReplayBuffer(
-            states=jnp.array(obs.numpy()),
-            actions=jnp.array(actions.numpy()),
-            rewards=jnp.array(rewards.numpy()),
-            log_probs=jnp.array(log_probs.numpy()),
-            dones=jnp.array(dones.numpy()),
+            states=jnp.array(obs),
+            actions=jnp.array(actions),
+            rewards=jnp.array(rewards),
+            log_probs=jnp.array(log_probs),
+            dones=jnp.array(dones),
         )
 
         actor, actor_optimiser_state, critic, critic_optimiser_state = train(
@@ -141,7 +148,15 @@ for eps in tqdm(range(n_episodes)):
             epsilon=epsilon,
             gamma=gamma,
             lambda_=lambda_,
+            max_episode_steps=max_episode_steps,
         )
+        last_mean_reward_log.set_description(
+            f" Mean reward: {float(np.mean(np.array(rews))):.2f}",
+        )
+    all_rewards.append(jnp.mean(jnp.array(rews)))
+    training_stats_log.set_description(
+        f" Mean reward: {float(np.mean(np.array(all_rewards))):.2f}",
+    )
 
 plt.plot(all_rewards)
 plt.show()
