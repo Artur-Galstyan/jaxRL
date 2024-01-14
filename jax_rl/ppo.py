@@ -132,7 +132,7 @@ def train(
     gamma: float = 0.99,
     lambda_: float = 0.95,
     max_episode_steps: int = 500,
-) -> (PyTree, PyTree, Array):
+) -> (PyTree, PyTree, PyTree, PyTree):
     critic, critic_optimiser_state = step_critic_network(
         critic=critic,
         optimiser=critic_optimiser,

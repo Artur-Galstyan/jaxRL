@@ -3,6 +3,7 @@ import jax
 import numpy as np
 from jaxtyping import PRNGKeyArray, PyTree
 from jax_rl.commons import RLDataset
+import equinox as eqx
 
 
 def rollout_gym(
@@ -21,6 +22,8 @@ def rollout_gym(
     rewards = []
     dones = []
     info = None
+
+    policy = eqx.filter_jit(policy)
 
     while True:
         key, subkey = jax.random.split(key)

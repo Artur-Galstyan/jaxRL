@@ -31,6 +31,7 @@ brax = "^0.9.3"
 rlax = "^0.1.6"
 gymnax = "^0.0.6"
 flax = "^0.7.5"
+wandb = "^0.16.2"
 
 
 [build-system]

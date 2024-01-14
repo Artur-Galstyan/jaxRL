@@ -1,3 +1,4 @@
+from typing import Optional
 from torch.utils.data import Dataset
 import torch
 import equinox as eqx
@@ -12,6 +13,7 @@ class ReplayBuffer(eqx.Module):
     dones: Bool[Array, "n_steps"]
     log_probs: Array
     states: Array
+    values: Optional[Array]
 
     def __init__(
         self,
@@ -20,12 +22,14 @@ class ReplayBuffer(eqx.Module):
         rewards: Array,
         log_probs: Array,
         dones: Bool[Array, "n_steps"],
+        values: Optional[Array] = None,
     ) -> None:
         self.states = states
         self.actions = actions
         self.rewards = rewards
         self.log_probs = log_probs
         self.dones = dones
+        self.values = values
 
 
 class RLDataset(Dataset):
@@ -36,12 +40,14 @@ class RLDataset(Dataset):
         rewards: Array,
         log_probs: Array,
         dones: Array,
+        values: Optional[Array] = None,
     ) -> None:
         self.rewards = torch.tensor(rewards)
         self.actions = torch.tensor(actions)
         self.obs = torch.tensor(states)
         self.dones = torch.tensor(dones)
         self.log_probs = torch.tensor(log_probs)
+        self.values = torch.tensor(values) if values is not None else None
 
     def __len__(self) -> int:
         return len(self.rewards)
@@ -53,6 +59,7 @@ class RLDataset(Dataset):
             self.rewards[idx].numpy(),
             self.log_probs[idx].numpy(),
             self.dones[idx].numpy(),
+            self.values[idx].numpy() if self.values is not None else None,
         )
 
 
