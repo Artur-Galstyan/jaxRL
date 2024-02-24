@@ -87,7 +87,8 @@ def train(
     replay_buffer: ReplayBuffer,
     *,
     key: PRNGKeyArray,
-) -> (PyTree, PyTree, Array):
+) -> tuple[PyTree, optax.OptState, PyTree, optax.OptState]:
+    print("JIT")
     key, subkey = jax.random.split(key)
 
     actor, actor_optimiser_state = step_actor_network(

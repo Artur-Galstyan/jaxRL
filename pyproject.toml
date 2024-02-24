@@ -1,44 +1,57 @@
-[tool.poetry]
+[project]
 name = "jaxRL"
 version = "0.1.0"
-description = ""
-authors = ["Artur A. Galstyan <mail@arturgalstyan.dev>"]
+description = "Reinforcement Learning with JAX"
 readme = "README.md"
-packages = [{include = "jax_rl"}]
+requires-python ="~=3.10"
+license = "MIT"
+authors = [
+  {name = "Artur A. Galstyan", email = "mail@arturgalstyan.dev"},
+]
+dependencies=[
+  "gymnasium",
+  "gymnasium[box2d]",
+  "jaxtyping",
+  "optuna",
+  "jupyter",
+  "jupyterlab",
+  "optax",
+  "tqdm",
+  "moviepy",
+  "jax",
+  "equinox",
+  "jaxlib",
+  "brax",
+  "rlax",
+  "beartype",
+  "matplotlib",
+  "jaxonloader",
+  "loguru"
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<3.12"
-gymnasium = {extras = ["box2d"], version = "^0.28.1"}
-jaxtyping = "^0.2.14"
-tensorflow-probability = "^0.23.0"
-tensorflow-macos = "^2.14.0"
-optuna = "^3.4.0"
-jupyter = "^1.0.0"
-jupyterlab = "^3.6.6"
-torch = "^2.1.0"
-optax = "^0.1.7"
-tqdm = "^4.66.1"
-moviepy = "^1.0.3"
-gym = "^0.26.2"
-chex = "^0.1.85"
-matplotlib = "^3.8.1"
-jax = "^0.4.23"
-equinox = "^0.11.2"
-jaxlib = "^0.4.20"
-icecream = "^2.1.3"
-beartype = "^0.16.4"
-brax = "^0.9.3"
-rlax = "^0.1.6"
-gymnax = "^0.0.6"
-flax = "^0.7.5"
-wandb = "^0.16.2"
+[tool.ruff]
+extend-include = ["*.ipynb"]
+fixable = ["I001", "F401"]
+ignore = ["E402", "E721", "E731", "E741", "F722"]
+ignore-init-module-imports = true
+select = ["E", "F", "I001"]
+src = []
+
+[tool.ruff.isort]
+combine-as-imports = true
+extra-standard-library = ["typing_extensions"]
+lines-after-imports = 2
+order-by-type = false
+
+[tool.pyright]
+reportIncompatibleMethodOverride = true
+reportMissingImports = false
+include = ["jaxonloader", "tests"]
 
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.ruff]
-ignore = ["F722", "F821"]
-
-
+[tool.hatch.build.targets.wheel]
+packages = ["jax_rl"]

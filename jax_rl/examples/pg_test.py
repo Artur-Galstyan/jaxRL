@@ -4,8 +4,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
+from jaxonloader import DataLoader
 from jaxtyping import Array, Float32, PRNGKeyArray
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from jax_rl.commons import ReplayBuffer
@@ -35,7 +35,7 @@ class Actor(eqx.Module):
             key=key,
         )
 
-    def __call__(self, x: Float32[Array, "state_dims"]) -> Array:
+    def __call__(self, x: Float32[Array, " state_dims"]) -> Array:
         """Forward pass of the policy network.
         Args:
             x: The input to the policy network.
@@ -67,7 +67,7 @@ class Critic(eqx.Module):
             key=key,
         )
 
-    def __call__(self, x: Float32[Array, "state_dims"]) -> Array:
+    def __call__(self, x: Float32[Array, " state_dims"]) -> Array:
         """Forward pass of the policy network.
         Args:
             x: The input to the policy network.
@@ -78,15 +78,16 @@ class Critic(eqx.Module):
 
 
 env = gym.make("LunarLander-v2")
+# env = gym.make("CartPole-v1")
 
 learning_rate = 3e-4
 
 
 assert env.observation_space.shape is not None, "Observation space must be defined."
-
+assert env.action_space is not None, "Action space must be defined."
 actor = Actor(
     in_size=env.observation_space.shape[0],
-    out_size=env.action_space.n,
+    out_size=env.action_space.n,  # type: ignore
     key=jax.random.PRNGKey(0),
 )
 
@@ -103,7 +104,7 @@ actor_optimiser_state = actor_optimiser.init(eqx.filter(actor, eqx.is_inexact_ar
 key = jax.random.PRNGKey(2)
 
 n_episodes = 2000
-batch_size = 8
+batch_size = 32
 
 all_rewards = []
 for eps in tqdm(range(n_episodes)):
@@ -114,16 +115,16 @@ for eps in tqdm(range(n_episodes)):
         batch_size=batch_size, shuffle=False, drop_last=True, dataset=dataset
     )
 
-    all_rewards.append(jnp.sum(dataset.rewards.numpy()))
+    all_rewards.append(jnp.sum(dataset.columns[2]))
 
     for batch in dataloader:
         obs, actions, rewards, log_probs, dones = batch
         b = ReplayBuffer(
-            states=jnp.array(obs.numpy()),
-            actions=jnp.array(actions.numpy()),
-            rewards=jnp.array(rewards.numpy()),
-            log_probs=jnp.array(log_probs.numpy()),
-            dones=jnp.array(dones.numpy()),
+            states=jnp.array(obs),
+            actions=jnp.array(actions),
+            rewards=jnp.array(rewards, dtype=jnp.float32),
+            log_probs=jnp.array(log_probs),
+            dones=jnp.array(dones),
         )
 
         actor, actor_optimiser_state, critic, critic_optimiser_state = train(

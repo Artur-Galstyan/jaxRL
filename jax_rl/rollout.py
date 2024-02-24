@@ -1,9 +1,10 @@
+import equinox as eqx
 import gymnasium as gym
 import jax
+import jax.numpy as jnp
 import numpy as np
+from jaxonloader import StandardDataset
 from jaxtyping import PRNGKeyArray, PyTree
-from jax_rl.commons import RLDataset
-import equinox as eqx
 
 
 def rollout_gym(
@@ -11,7 +12,7 @@ def rollout_gym(
     policy: PyTree,
     key: PRNGKeyArray,
     render: bool = False,
-):
+) -> StandardDataset:
     """Rollout a policy in a gym environment."""
 
     obs, info = env.reset()
@@ -44,13 +45,10 @@ def rollout_gym(
 
         if done:
             break
-
-    return (
-        np.array(observations),
-        np.array(actions),
-        np.array(rewards),
-        np.array(log_probs),
-        np.array(dones),
+    return StandardDataset(
+        jnp.array(observations, dtype=jnp.float32),
+        jnp.array(actions),
+        jnp.array(rewards),
+        jnp.array(log_probs),
+        jnp.array(dones),
     )
-
-    return dataset
